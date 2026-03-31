@@ -2734,3 +2734,575 @@ Tax tables, brackets, and inclusion rates must always be sourced from the mainta
 ---
 
 *This document does not replace legal or tax advice. Tax treatment depends on individual facts; the engine encodes product policy and user choices, not a binding CRA or Revenu Québec position.*
+
+
+
+
+
+
+
+# Shakepay `NormalizedCode` Taxonomy — Final Canada Tax Specification
+
+**Verification date:** 2026-03-30  
+**Intended use:** individual taxpayers, personal-use Shakepay activity  
+**Status:** implementation-ready specification with explicit open issues  
+**Not legal or tax advice**
+
+---
+
+## 1. Purpose
+
+This document defines the final `NormalizedCode` taxonomy and default tax-treatment model for a Shakepay-only Canadian personal-use tax engine.
+
+It is designed to do four things at once:
+
+1. preserve the codes actually seen in Shakepay exports,
+2. separate canonical business categories from operational/export labels,
+3. align the tax layer with official Canada Revenue Agency (CRA) and Revenu Québec guidance as verified on **2026-03-30**, and
+4. state uncertainty explicitly where the law or the source material is not fully settled.
+
+This document is intentionally narrower than a full tax-return manual. It is a transaction-classification and tax-engine specification, not a substitute for a CPA review.
+
+---
+
+## 2. Scope
+
+### 2.1 In scope
+
+- Canadian **individual** taxpayers
+- **Personal-use** Shakepay activity
+- Federal income-tax classification
+- Provincial / territorial income-tax estimation using the federal classification baseline
+- A dedicated **Québec** compliance module
+- BTC, ETH, CAD, USD, and USDC events present in Shakepay exports
+- Auditability of raw/export labels
+
+### 2.2 Out of scope
+
+- Corporate tax
+- Trust, partnership, or entity-specific filing workflows
+- Business-inventory treatment
+- Employment or self-employment characterization beyond explicit review flags
+- GST/HST or QST implementation logic
+- Non-Shakepay exchanges unless separately imported
+- Legal advice or filing opinions
+
+### 2.3 Personal-use assumption
+
+This specification assumes the user is not carrying on a crypto trading, mining, staking, or other crypto business. Where the facts indicate business activity, this engine must **surface a review requirement** rather than force a personal-use answer.
+
+---
+
+## 3. Authoritative source hierarchy
+
+### 3.1 Tax-law hierarchy
+
+For the legal/tax layer, the order of authority is:
+
+1. **Official CRA guidance**
+2. **Official Revenu Québec guidance**
+3. **Current Shakepay help-center / legal materials** for product meaning only
+4. **Observed Shakepay export behaviour** for parser reality and implementation support
+5. **Internal markdown / PRD / spec documents** for implementation decisions
+
+### 3.2 Parser / taxonomy hierarchy
+
+For code support and normalization, the order of authority is:
+
+1. **Observed exported rows and observed headers**
+2. **Current implementation-ready spec**
+3. **Older PRD / draft specs**
+
+Where the public Shakepay description of a feature conflicts with the way the exported files actually label transactions, the engine must:
+
+- preserve the **observed export code**,
+- document the naming mismatch, and
+- avoid silently rewriting history.
+
+---
+
+## 4. Canada-wide tax framework
+
+## 4.1 Federal baseline (verified)
+
+The CRA’s crypto-asset guidance treats crypto activity as either **business income/loss** or **capital gain/loss**, depending on the facts. If crypto activity is on income account, the full profit or loss is reported in business income. If a crypto-asset is disposed of on capital account, the gain or loss is calculated using proceeds minus adjusted cost base, and the CRA’s crypto guide currently says to include **half** of capital gains in income. The CRA also treats paying for goods or services with cryptocurrency as a **barter transaction** and a disposition of the crypto-asset. A person who carries on crypto business activity may also have GST/HST obligations, which this spec does not implement.  
+
+### Federal implementation rule
+
+For this engine:
+
+- default to **capital-account treatment** for personal investing / personal-use users,
+- use **business-income review** when the facts indicate trading, mining, staking, yield-farming, or other business-like activity,
+- treat crypto-for-crypto swaps and crypto spending as **dispositions**, and
+- source the inclusion rate from maintained tax tables rather than hardcoding it in parser logic.
+
+### Inclusion-rate note
+
+As of **2026-03-30**, the CRA’s public crypto guidance still states that **half** of capital gains are included in income, and CRA’s public “What’s new for corporations” page states that the previously proposed increase in the capital-gains inclusion rate was **later announced cancelled**. This specification therefore uses **50%** as the current administered default for the personal-use capital-account model, but still requires the inclusion rate to come from a maintained tax table. See §13.
+
+## 4.2 Québec baseline (verified)
+
+Revenu Québec states that cryptoassets are **property / goods** and not legal tender, and that transactions carried out using cryptoassets are treated as **barter** for income-tax purposes. Revenu Québec also states that the tax consequences are a **fact-driven** exercise that may produce either capital treatment or business / property income treatment.
+
+Since **2024**, Revenu Québec requires the **TP-21.4.39 – Déclaration relative aux cryptoactifs** for taxpayers and partnerships that, during the year:
+
+- own cryptoassets,
+- receive cryptoassets,
+- dispose of cryptoassets,
+- use cryptoassets in a transaction, or
+- receive mining or staking rewards.
+
+For **2025**, Revenu Québec’s line-139 guidance says taxable capital gains are calculated by multiplying total capital gains by **50%**.
+
+### Québec implementation rule
+
+For Québec residents, this engine must:
+
+- apply the same federal-style capital-vs-business classification logic,
+- generate a **TP-21.4.39 required** flag whenever the Revenu Québec trigger conditions are met,
+- keep a Québec support report suitable for the user’s TP-1 filing package,
+- preserve the 50% inclusion-rate default for 2025 calculations, and
+- keep the inclusion rate table configurable for future tax years.
+
+## 4.3 Other provinces and territories
+
+This specification does **not** claim that every province has identical crypto-specific administrative guidance. What it does say is narrower:
+
+- the engine uses the **federal classification model** as its default tax-classification baseline outside Québec,
+- provincial / territorial income-tax estimation is applied **after** the income has been classified federally, and
+- as of **2026-03-30**, this specification includes a dedicated province-specific crypto compliance module only for **Québec**.
+
+This is an implementation choice, not a claim that no other province could ever adopt a separate crypto rule.
+
+---
+
+## 5. Import contract and observed file reality
+
+## 5.1 Observed filenames
+
+The real files observed in the project materials are:
+
+- `crypto_transactions_summary.csv`
+- `cash_transactions_summary.csv`
+- `usd_transactions_summary.csv`
+
+The documentation may mention language-suffixed variants, but the engine must treat the unsuffixed filenames above as **first-class expected inputs**, not exceptions.
+
+## 5.2 Detection rule
+
+**Normative rule:** file-family detection must be based on **headers and asset content**, not on filenames.
+
+### Cash-family header
+
+`Date, Type, Description, Debit, Credit, Spot Rate, Buy / Sell Rate, Balance`
+
+### Crypto / USD-family header
+
+`Date, Amount Debited, Asset Debited, Amount Credited, Asset Credited, Market Value, Market Value Currency, Book Cost, Book Cost Currency, Type, Spot Rate, Buy / Sell Rate, Description`
+
+## 5.3 Family model
+
+The supported import families are:
+
+- `cash_summary`
+- `crypto_summary`
+- `usd_summary`
+
+If a detection example or pseudocode first identifies a file as “crypto_or_usd_summary”, that is only acceptable as a **two-stage example**. The final resolved family stored in typed models must still be one of the three values above.
+
+## 5.4 Missing-file behaviour
+
+The documentation previously mixed two ideas: “crypto summary required” and “degraded completeness still possible.” The final rule is:
+
+- an upload session may still be **accepted** without a crypto file,
+- but any yearly tax calculation that depends on ACB or dispositions must be marked **materially_incomplete**, and
+- the API must not pretend a complete tax computation exists when the crypto file is missing.
+
+In other words:
+
+- **upload allowed**,
+- **calculation allowed in degraded mode**,
+- **complete tax result not allowed**.
+
+---
+
+## 6. Final taxonomy model
+
+## 6.1 Layer summary
+
+| Layer | Count | Role |
+|---|---:|---|
+| Canonical normalized codes | 32 | Preferred current taxonomy |
+| Supplemental operational/export codes | 7 | Supported raw/export or reconciliation labels |
+| Deprecated aliases | 3 | Accepted on input and mapped forward |
+
+This yields a **42-code superset**.
+
+## 6.2 Layer definitions
+
+### Canonical normalized codes
+
+These are the preferred business-facing categories used by the current implementation-ready spec.
+
+### Supplemental operational/export codes
+
+These are valid supported inputs seen in exports or implementation notes, but they are not the cleanest top-level economic taxonomy.
+
+### Deprecated aliases
+
+These remain accepted only for backward compatibility and must be rewritten immediately.
+
+---
+
+## 7. Canonical normalized codes (32)
+
+## 7.1 Rewards / incentives
+
+| Code | Default tax treatment | Notes |
+|---|---|---|
+| `shakingsats` | `taxable_income` | BTC reward income at receipt |
+| `referral_bonus` | `taxable_income` | Referral reward |
+| `referral_promo_bonus` | `taxable_income` | Promotional referral reward |
+| `shakesquad_reward` | `taxable_income` | BTC reward income |
+| `cad_interest` | `interest_income` | Cash interest income |
+| `card_cashback_btc` | `purchase_rebate` | Prudent default; not explicitly confirmed by CRA for Shakepay card cashback |
+| `card_intro_bonus_3pct` | `purchase_rebate` | Same caution as above |
+
+### Commentary
+
+The tax treatment of cashback as a purchase rebate is a **policy choice**, not a CRA webpage specifically about Shakepay card cashback. It is a reasonable conservative implementation position, but it should remain disclosed.
+
+## 7.2 SIF / internal peer-to-peer family
+
+| Code | Recommended treatment | Notes |
+|---|---|---|
+| `sif_received` | `no_tax_effect` by default in personal-use mode | Separate family; see naming caveat below |
+| `sif_sent` | `personal_non_deductible_outflow` | Separate family; see naming caveat below |
+
+### Important naming caveat
+
+There is a real source mismatch here:
+
+- **Observed exports** use `sif_received` / `sif_sent` for Shakepay-internal user-to-user flows identified by `@username`, including CAD and crypto rows.
+- **Public Shakepay help-center and legal pages** describe **Shake It Forward (SIF)** as a voluntary pay-it-forward card feature funded from CAD balance and matched to another user’s card purchase.
+
+This specification resolves the mismatch as follows:
+
+- for **ingestion and normalization**, the engine preserves the observed export labels `sif_received` and `sif_sent`,
+- for **taxonomy**, SIF remains its own family, separate from generic rewards and separate from ordinary asset-transfer buckets,
+- for **tax policy**, the personal-use default is:
+  - received: `no_tax_effect`
+  - sent: `personal_non_deductible_outflow`
+- for **legal certainty**, this remains an **interpretive policy choice**, not a CRA or Revenu Québec statement specifically about Shakepay SIF.
+
+### Why this is the least-wrong final rule
+
+- CRA states that **most gifts are not taxed**.
+- CRA and Revenu Québec donation-credit frameworks depend on recognized / qualified donees and official receipts.
+- Public Shakepay SIF is voluntary, final, non-refundable, and not an investment return.
+- The completed internal export classifies sample `sif_received` rows as `no_tax_effect` and sample `sif_sent` rows as `personal_non_deductible_outflow`.
+
+If a `sif_*` row is actually compensation, business revenue, or consideration for goods/services, this default must be overridden by review.
+
+## 7.3 Fiat / cash events
+
+| Code | Default tax treatment | Notes |
+|---|---|---|
+| `cad_deposit` | `no_tax_effect` | Pure cash funding event |
+| `cad_withdrawal` | `no_tax_effect` | Pure cash outflow event |
+| `cad_send` | context-dependent transfer code | Do not force income treatment without facts |
+| `cad_receive` | context-dependent transfer code | Do not force income treatment without facts |
+| `cash_buy_leg` | `cash_funding_only` | Reconciliation leg only |
+
+### `cad_send` / `cad_receive` clarification
+
+These values stay in the canonical set because the source materials reserve them as real transfer concepts, but they are **not fully specified enough** to auto-classify every send/receive row without context.
+
+Final rule:
+
+- use `cad_send` / `cad_receive` only when the row is a **cash transfer** that is **not** better classified as `sif_*`, `cad_deposit`, or `cad_withdrawal`,
+- default to **review or no-tax transfer handling depending on available counterparty metadata**, and
+- do not silently treat them as income.
+
+## 7.4 CAD ↔ crypto trades
+
+| Code | Default tax treatment | Notes |
+|---|---|---|
+| `cad_to_btc` | `crypto_acquisition` | Adds BTC ACB |
+| `cad_to_eth` | `crypto_acquisition` | Adds ETH ACB |
+| `btc_to_cad` | `taxable_disposition` | Capital-account default in personal-use mode |
+| `eth_to_cad` | `taxable_disposition` | Capital-account default in personal-use mode |
+
+## 7.5 Crypto ↔ crypto swaps
+
+| Code | Default tax treatment | Notes |
+|---|---|---|
+| `btc_to_eth` | disposition + acquisition | Taxable on capital account unless business facts apply |
+| `eth_to_btc` | disposition + acquisition | Taxable on capital account unless business facts apply |
+
+## 7.6 Asset-specific transfers
+
+| Code | Default tax treatment | Notes |
+|---|---|---|
+| `btc_send` | `transfer_or_disposition_review` | Ownership question controls final treatment |
+| `btc_receive` | `transfer_or_income_review` | Ownership / source question controls final treatment |
+| `eth_send` | `transfer_or_disposition_review` | Same rule |
+| `eth_receive` | `transfer_or_income_review` | Same rule |
+
+## 7.7 USDC review / conversion
+
+| Code | Default tax treatment | Notes |
+|---|---|---|
+| `usdc_cad_conversion` | `no_tax_effect` or review | Preserve as USDC-specific reference event |
+| `usdc_send_review` | review-only | Excluded from BTC/ETH ACB pools |
+| `usdc_receive_review` | review-only | Excluded from BTC/ETH ACB pools |
+
+### USDC rule
+
+USDC remains outside the BTC/ETH ACB pools unless policy changes. This spec does **not** treat USDC as automatically entering the BTC/ETH capital-gains engine.
+
+## 7.8 USD review
+
+| Code | Default tax treatment | Notes |
+|---|---|---|
+| `usd_receive_review` | `usd_review` | Review-only ledger |
+| `usd_send_review` | `usd_review` | Review-only ledger |
+| `usd_sell_review` | `usd_review` | Review-only ledger |
+
+### USD rule
+
+USD remains a **review-only** family in this engine. The tax engine must not silently pull USD rows into the BTC/ETH capital-gains engine.
+
+## 7.9 Fallback / unresolved
+
+| Code | Default tax treatment | Notes |
+|---|---|---|
+| `unknown_reward_review` | `non_taxable_review` | Reward-like but unresolved |
+| `unknown_review` | `non_taxable_review` | General unresolved fallback |
+
+---
+
+## 8. Supplemental operational/export codes (7)
+
+| Code | Role | Recommended handling |
+|---|---|---|
+| `card_purchase` | Card spend row | Preserve as supported operational code; personal non-deductible outflow |
+| `cash_sell_leg` | Cash side of sell | Preserve at row level; collapse into economic sell event |
+| `convert_in_leg` | Inbound conversion leg | Preserve at row level; collapse into economic conversion event |
+| `convert_out_leg` | Outbound conversion leg | Preserve at row level; collapse into economic conversion event |
+| `onchain_wallet_send` | Generic transport label | Forward-map to asset-specific send when asset is known; otherwise preserve |
+| `usd_buy_review` | Observed USD label | Preserve until USD policy is finalized |
+| `usd_cad_conversion` | Observed USD conversion label | Preserve until USD policy is finalized |
+
+### Why these remain supplemental
+
+These are real labels found in export reality, but they are mostly **row-level transport / reconciliation / implementation labels**, not the cleanest economic categories.
+
+---
+
+## 9. Deprecated aliases (3)
+
+| Deprecated code | Rewrite to | Rule |
+|---|---|---|
+| `usd_receive` | `usd_receive_review` | rewrite immediately |
+| `usd_send` | `usd_send_review` | rewrite immediately |
+| `usd_sell` | `usd_sell_review` | rewrite immediately |
+
+---
+
+## 10. Forward-mapping rules
+
+| Input code | Action |
+|---|---|
+| `usd_receive` | rewrite to `usd_receive_review` |
+| `usd_send` | rewrite to `usd_send_review` |
+| `usd_sell` | rewrite to `usd_sell_review` |
+| `onchain_wallet_send` | map to `btc_send`, `eth_send`, or `usdc_send_review` when asset is known; otherwise preserve raw label |
+| `convert_in_leg` / `convert_out_leg` | preserve at row level, collapse at economic-event level |
+| `cash_sell_leg` | preserve at row level, collapse at economic-event level |
+| `card_purchase` | preserve as supported operational code |
+| `usd_buy_review` / `usd_cad_conversion` | preserve as supplemental until USD policy is finalized |
+
+---
+
+## 11. Reconciliation and valuation rules
+
+## 11.1 Linker vs ACB source-of-value mismatch
+
+Earlier drafts mixed two ideas:
+
+- the **linker** matched cash and crypto rows using market-value logic, and
+- the **ACB engine** preferred `Book Cost`.
+
+### Final rule
+
+- **Economic matching / linking:** use both `Book Cost` and `Market Value`, with explicit precedence.
+- **Precedence:**
+  1. `Book Cost` when available and numerically plausible,
+  2. `Market Value` when `Book Cost` is absent, blank, or obviously unusable,
+  3. timestamp / quantity / asset context as tie-breakers.
+- **ACB ledger:** prefer `Book Cost` over `Market Value`.
+
+### Rationale
+
+`Book Cost` is the better tax-basis source when present. `Market Value` remains useful for linking because some rows are operationally paired even when book-cost information is incomplete or shaped differently.
+
+---
+
+## 12. Error and review behaviour
+
+## 12.1 Negative pool quantities
+
+Earlier drafts treated negative asset-pool quantities as both a review item and a processing error without distinguishing when each applies.
+
+### Final rule
+
+- a negative pool quantity is always a **material review condition**,
+- it becomes a **blocking processing error** only when the engine cannot continue without inventing basis,
+- otherwise the engine may continue in degraded mode but must mark the result `materially_incomplete`.
+
+## 12.2 Missing crypto file
+
+- missing crypto file: **not an upload error**
+- missing crypto file for a year that needs ACB or dispositions: **materially incomplete computation**
+- API must not label the result “complete” in that state
+
+---
+
+## 13. Timezone and year-boundary rule
+
+The previous materials referenced local-year boundaries without clearly defining the timezone source.
+
+### Final rule
+
+- the engine must use a **single selected tax timezone per dossier / run**,
+- for Canadian personal-use workflow, that timezone should default to the user’s **province-of-residence timezone** for the tax year unless the user explicitly overrides it,
+- annual filtering, opening ACB rollforward, and year-end cutoffs must all use **that same timezone**, and
+- timestamps from imported files must be interpreted consistently under that selected timezone.
+
+### Québec note
+
+For Québec residents, use the Québec filing timezone context consistently for TP-21.4.39 support reporting.
+
+---
+
+## 14. Capital-gains inclusion-rate rule
+
+### Current verified position as of 2026-03-30
+
+For this personal-use Shakepay engine, the verified administered default is:
+
+- **Federal:** 50% taxable capital-gain inclusion on capital account
+- **Québec (2025 line 139):** 50% taxable capital-gain inclusion on capital account
+
+### Hard rule
+
+The inclusion rate must come from maintained tax tables, **not** from parser logic or prose assumptions. This is required because tax years, enacted changes, and province-specific harmonization can change.
+
+---
+
+## 15. Québec module requirements
+
+For Québec residents and tax years **2024+**, the engine must:
+
+1. detect whether the taxpayer:
+   - owned cryptoassets,
+   - received cryptoassets,
+   - disposed of cryptoassets,
+   - used cryptoassets in a transaction, or
+   - received mining / staking rewards;
+2. flag **TP-21.4.39 required** when any trigger is met;
+3. generate a Québec support report suitable for TP-1 preparation;
+4. preserve capital-gain and income subtotals needed for Québec reporting; and
+5. warn that failure to file TP-21.4.39 where required can attract penalties.
+
+---
+
+## 16. Known open issues and explicit uncertainties
+
+## 16.1 SIF legal certainty
+
+The engine’s default SIF treatment is a **policy choice**, not a CRA or Revenu Québec statement specifically about Shakepay SIF.
+
+## 16.2 Cashback legal certainty
+
+Treating `card_cashback_btc` and `card_intro_bonus_3pct` as **purchase rebates** is a defensible implementation position, but not a confirmed CRA page written specifically for Shakepay card rewards.
+
+## 16.3 `cad_send` / `cad_receive` completeness
+
+These codes remain supported, but their rule tables are not as mature as the core buy/sell/reward families. They should not be used to force an income result without facts.
+
+## 16.4 USD policy completeness
+
+The USD branch remains **review-only**. The engine preserves it; it does not claim the USD policy is fully resolved.
+
+## 16.5 Province-by-province non-Québec compliance review
+
+This specification includes a dedicated province-specific crypto compliance module only for **Québec**. It does not claim to have completed a separate crypto-compliance review for every other province or territory.
+
+---
+
+## 17. Final superset list
+
+### 17.1 Canonical (32)
+
+`shakingsats`, `referral_bonus`, `referral_promo_bonus`, `shakesquad_reward`, `cad_interest`, `card_cashback_btc`, `card_intro_bonus_3pct`, `sif_received`, `sif_sent`, `cad_deposit`, `cad_withdrawal`, `cad_send`, `cad_receive`, `cash_buy_leg`, `cad_to_btc`, `cad_to_eth`, `btc_to_cad`, `eth_to_cad`, `btc_to_eth`, `eth_to_btc`, `btc_send`, `btc_receive`, `eth_send`, `eth_receive`, `usdc_cad_conversion`, `usdc_send_review`, `usdc_receive_review`, `usd_receive_review`, `usd_send_review`, `usd_sell_review`, `unknown_reward_review`, `unknown_review`
+
+### 17.2 Supplemental (7)
+
+`card_purchase`, `cash_sell_leg`, `convert_in_leg`, `convert_out_leg`, `onchain_wallet_send`, `usd_buy_review`, `usd_cad_conversion`
+
+### 17.3 Deprecated aliases (3)
+
+`usd_receive`, `usd_send`, `usd_sell`
+
+---
+
+## 18. Final implementation statement
+
+The final engine policy is:
+
+- use the **32 canonical codes** as the preferred taxonomy,
+- accept the **7 supplemental codes** for ingestion and auditability,
+- accept the **3 deprecated aliases** and rewrite them immediately,
+- keep **SIF separate** from generic rewards and generic transfers,
+- keep **USD review-only**,
+- keep **USDC outside BTC/ETH ACB pools** unless policy changes,
+- source the **capital-gains inclusion rate** from maintained tax tables,
+- use **Book Cost first** for tax basis and a **Book Cost → Market Value** precedence model for linking,
+- treat **negative pools** as always reviewable and sometimes blocking, and
+- require a **Québec TP-21.4.39 module** for Québec residents and Québec filings.
+
+---
+
+## 19. References verified on 2026-03-30
+
+### Official Canadian tax sources
+
+- CRA — *Information for crypto-asset users and tax professionals*
+- CRA — *Reporting income from crypto-asset transactions*
+- CRA — *Completing Schedule 3*
+- CRA — *Amounts that are not reported or taxed*
+- CRA — *Line 34900 – Donations and gifts*
+- CRA — *Guide P113 — Gifts and Income Tax (2025)*
+- CRA — *What’s new for corporations* (capital-gains inclusion-rate cancellation note)
+- Revenu Québec — *Les cryptoactifs*
+- Revenu Québec — *TP-21.4.39-V — Cryptoasset Return*
+- Revenu Québec — *Ligne 24 – Cryptoactifs*
+- Revenu Québec — *Ligne 139 – Gains en capital imposables*
+- Revenu Québec — *Crédits d’impôt pour dons*
+
+### Official Shakepay product sources
+
+- Shakepay Help Center — *Introducing Shake it Forward*
+- Shakepay Legal — *Benefits and Rewards Terms* (SIF section)
+
+### Internal implementation sources
+
+- `shakepay_tax_engine_documentation_v3.1.md`
+- `shakepay_tax_engine_prd_v2.md.docx`
+- `shakepay-tax-2025 v2_completed.csv`
+- project discrepancy notes regarding `card_purchase`, `send/receive`, and SIF mapping
+
+
+
